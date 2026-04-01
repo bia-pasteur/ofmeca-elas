@@ -18,7 +18,6 @@ def process_noise(
     noise_path:Path,
     mu:float,
     lambda_:float,
-    pixel_size: float,
     of_for_computation: List[Callable],
     params_for_computation: List[Dict], 
     global_flow: bool,
@@ -64,7 +63,6 @@ def process_noise(
     results = compute_of_strain_traction(
         images=images,
         displacements=displacements,
-        pixel_size=pixel_size,
         mu=mu,
         lambda_=lambda_,
         of_functions=of_for_computation, 
@@ -85,19 +83,13 @@ def main(
     Runs a noise sensitivity analysis for optical flow-based strain and traction estimation.
 
     Args:
-        plot_parameters (PlotParams): Configuration for visualization and result plotting 
         optical_flow (OpticalFlowParams): Configuration object containing parameter sets for each supported optical flow method
-        general (GeneralParams): General configuration including paths for result storage and experiment control flags.
-        geometry (GeometryParams): Physical and spatial settings of the image domain, including the number of pixels (`n`), 
-            the physical domain range (`x_range`), and total physical length (`physical_length`),
-            used to compute `pixel_size`.
-        experiment (Experiment): Definition of which case(s) to process, including traction force `T`,
-            Young’s modulus `E`, Poisson’s ratio `ν`, experiment index `exp_ind`,
-            and optionally a specific `image_id`.
-            Also includes the list `of_funcs` specifying which optical flow methods to run.
+        general (GeneralParams): General configuration (mainly result storage)
+        noise_exp (NoiseExperiment): Parameters of the nois eexperiment (optical flow functions to test)
+
     Raises:
         ValueError: 
-            If the optical flow functions provided in the experiment class are not in the available optical flow functions.
+        If the optical flow functions provided in the experiment class are not in the available optical flow functions.
     """
 
     of_methods = {
@@ -117,8 +109,6 @@ def main(
         of_func, of_params = of_methods[of_func_name]
         of_for_computation.append(of_func)
         params_for_computation.append(of_params)
-        
-    pixel_size = general.n / ((general.x_range[1]-general.x_range[0])*general.physical_length)
     
     base_path = Path("data")
     noise_folder = next(base_path.glob("noise_experiment*"))
@@ -138,7 +128,6 @@ def main(
             noise_path=noise_path,
             mu=mu, 
             lambda_=lambda_,
-            pixel_size=pixel_size,
             of_for_computation=of_for_computation,
             params_for_computation=params_for_computation, 
             global_flow=optical_flow.global_flow

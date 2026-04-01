@@ -11,10 +11,10 @@ from mechanics.src.MCM.quantities_computation import (
 )
 from mechanics.src.utils import rmse
 
+
 def compute_of_strain_traction(
     images: List[np.ndarray], 
     displacements: List[np.ndarray], 
-    pixel_size: float, 
     mu: float,
     lambda_: float, 
     of_functions: List[Callable],
@@ -22,28 +22,22 @@ def compute_of_strain_traction(
     global_flow: bool
 ) -> Dict: 
     """
-    Compute optical-flow-based displacement, strain, deformation, stress, and traction fields,
-    and compare them to ground-truth quantities for one or several images.
-
-    This function evaluates several optical flow (OF) methods on a sequence of images with 
-    known ground-truth displacements. For each image, it computes the corresponding
-    strain, deformation gradient, stress, and traction fields, and calculates the 
-    root mean square error (RMSE) between the OF-based estimates and the ground truth.
-    Mean RMSE values across all images are also provided.
+    Compute optical-flow-based displacement, strain, deformation, stress, and traction fields for
+    a given set of images and displacements.
+    The results are stored in a dictionary that will also incluse the average values in the case
+    of several images and displacements provided.
 
     Args:
         images (List[np.ndarray]): List of 2D grayscale images (float or uint) used as inputs to optical flow methods.
         displacements (List[np.ndarray]): List of ground-truth displacement fields for each image.
-        pixel_size (float):Conversion factor from pixel to physical units (e.g., µm/pixel).
         mu (float): Lamé parameter
         lambda_ (float): Lamé parameter
         of_functions (List[Callable]): List of optical flow functions to evaluate. 
-        of_params (List[Dict]): List of parameter dictionaries corresponding to each function in `of_functions`.
+        of_params (List[Dict]): List of parameter dictionaries corresponding to each function in of_functions.
         global_flow (bool): Used in optical flow computation to compute the flow between every image and the next or between the first image and every other.
 
-    Returns
-        dict:
-            Dictionary containing, for each image index:
+    Returns:
+        Dict:  Dictionary containing, for each image index:
             
             - `"flows"`, `"strain"`, `"deformation"`, `"stress"`, `"traction"`:
             dictionaries with ground-truth (`"gt"`) and OF-based results per method.
@@ -56,17 +50,15 @@ def compute_of_strain_traction(
             - `"mean_rmse_disp"`, `"mean_rmse_strain"`, `"mean_rmse_def"`, 
             `"mean_rmse_stress"`, `"mean_rmse_traction"`, `"std_rmse_disp"`, `"std_rmse_strain"`, `std_rmse_def"`, 
             `"std_rmse_stress"`, `"std_rmse_traction"`
-    
     """
-    
     results = {}
     
     for nb, image in enumerate(images):
         results[nb] = {}
         displacement = displacements[nb]
-        disp_gt = displacement * pixel_size
+        disp_gt = displacement
         mask = (disp_gt[0,0] != 0)
-        strain_gt = strain_mask(displacement, [1/pixel_size, 1/pixel_size], mask)
+        strain_gt = strain_mask(displacement, [1, 1], mask)
         def_gt = deformation(strain_gt)
         stress_gt = stress_mask(strain_gt, mu, lambda_)
         
@@ -116,11 +108,11 @@ def compute_of_strain_traction(
             results[nb]["traction"][method_name] = traction_of
             results[nb]["runtime"][method_name] = time_method
             
-            results[nb]["rmse_flows"][method_name] = 100*rmse_flow
-            results[nb]["rmse_strain"][method_name] = 100*rmse_strain
-            results[nb]["rmse_def"][method_name] = 100*rmse_def
-            results[nb]["rmse_stress"][method_name] = 100*rmse_stress
-            results[nb]["rmse_traction"][method_name] = 100*rmse_traction
+            results[nb]["rmse_flows"][method_name] = rmse_flow * 100
+            results[nb]["rmse_strain"][method_name] = rmse_strain * 100
+            results[nb]["rmse_def"][method_name] = rmse_def * 100
+            results[nb]["rmse_stress"][method_name] = rmse_stress
+            results[nb]["rmse_traction"][method_name] = rmse_traction
 
     if len(images)>1:
         results["mean_rmse_disp"] = {}

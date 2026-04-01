@@ -3,12 +3,13 @@
 
 from typing import Callable
 import gmsh # type: ignore
+import numpy as np
+import cv2
 from mpi4py import MPI
 from dolfinx import io
 from dolfinx.io import XDMFFile
 from dolfinx.io import gmsh as gmshio
 import dolfinx
-import numpy as np
 import pyvista
 
 def gmsh_sphere(
@@ -90,6 +91,7 @@ def gmsh_disk(
     model.mesh.generate(dim=2)
     
     return model
+
 
 def create_cell_like_shape(num_points, base_radius, noise_amplitude, num_fourier_modes, rng, r_min_ratio=0.5):
     """
@@ -185,6 +187,48 @@ def gmsh_cell_shape(
     return model, x_coords, y_coords
 
 
+def gmsh_cell_from_image(
+    img: np.ndarray,
+    model: gmsh.model,
+    name: str
+) -> gmsh.model:
+    """
+    Create a Gmsh model of a cell from an image.
+
+    Args:
+        img (np.ndarray): Image of a masked cell
+        model (gmsh.model): Gmsh model to add the mesh to.
+        name (str): Name (identifier) of the mesh to add.
+
+    Returns:
+        gmsh.model: Gmsh model with a mesh of a cell added.
+    """
+    # Settings of the model
+    model.add(name)
+    model.setCurrent(name)
+    
+    # Get the coordinated of the contours of the cell
+    contours, _ = cv2.findContours(img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours = np.array(contours)
+    x_coords = contours[0, :, 0, 0]
+    y_coords = contours[0, :, 0, 1]
+    
+    # Create the outline of the mesh using the coordinates
+    points = [model.geo.addPoint(x, y, 0, 0) for x, y in zip(x_coords, y_coords)]
+    lines = [model.geo.addLine(points[i], points[(i+1) % len(points)]) for i in range(len(points))]
+    cl = model.geo.addCurveLoop(lines)
+    surface = model.geo.addPlaneSurface([cl])
+
+    # Create the model
+    model.geo.synchronize()
+    model.addPhysicalGroup(2, [surface], 1)
+    model.setPhysicalName(2, 1, "CellSurface")
+
+    model.mesh.generate(2)
+
+    return model, x_coords, y_coords
+
+
 def create_mesh(
     comm: MPI.Comm,
     model: gmsh.model,
@@ -242,22 +286,28 @@ def create_mesh(
             )
 
 def create_mesh_file(
-    physical_length: float,
     mesh_function: Callable,
-    rng,
+    img: np.ndarray=None,
+    physical_length: float=None,
+    rng=None,
     num_points=None,
     noise_amplitude=None,
     num_fourier_modes=None,
     lc=None
 ) -> dolfinx.mesh.Mesh:
-    """
+    """    
     Creates a computational mesh using a user-defined mesh function,
     writes it to XDMF, and reads it back as a DolfinX mesh.
 
     Args:
-        L_phys (float): Half-length of the cubic physical domain.
         mesh_function (Callable): Function that generates the Gmsh model.
-            Signature: mesh_function(model: gmsh.model.Model, name: str, L_phys: float) -> gmsh.model.Model
+        img (np.ndarray, optional): Image of a masked cell if we create the mesh from a masked cell. Defaults to None.
+        physical_length (float, optional): Physical length of the cell if we create the mesh from a random shape from scratch. Defaults to None.
+        rng (random.generator, optional): random generator. Defaults to None.
+        num_points (int, optional): Number of points to create the mesh if we create it from a random shape from scratch. Defaults to None.
+        noise_amplitude (float, optional): Amplitude of the noise to add to the original disk if we create the mesh from a random shape from scratch. Defaults to None.
+        num_fourier_modes (int, optional): Number of Fourier modes on the original disk if we create the mesh from a random shape from scratch. Defaults to None.
+        lc (float, optional): Minimum allowed radius as fraction of physical_length. Defaults to None.
 
     Returns:
         dolfinx.mesh.Mesh: The generated computational mesh ready for FEM simulation.
@@ -269,12 +319,12 @@ def create_mesh_file(
     # Create model
     model_ = gmsh.model()
     
-    if num_points is not None:
-        model, x_coords, y_coords = mesh_function(model_, "Grid", physical_length, rng, num_points, noise_amplitude, num_fourier_modes, lc)
+    if img is not None:
+        model, x_coords, y_coords = mesh_function(img, model_, "Grid")
     
     else :  
-        model = mesh_function(model_, "Grid", physical_length)
-
+        model, x_coords, y_coords = mesh_function(model_, "Grid", physical_length, rng, num_points, noise_amplitude, num_fourier_modes, lc)
+    
     # Fix the order of the elements // à préciser
     model.mesh.set_order(1)
 
@@ -284,12 +334,8 @@ def create_mesh_file(
     with io.XDMFFile(MPI.COMM_WORLD, './out_gmsh/mesh_grid.xdmf', 'r') as xdmf:
         # Read the mesh
         msh = xdmf.read_mesh(name="Grid")
-    
-    if num_points is not None:
-        return x_coords, y_coords, msh
-    
-    else : 
-        return None, None, msh
+
+    return x_coords, y_coords, msh
     
     
 def visualize_mesh(V: dolfinx.fem.functionspace):
@@ -305,5 +351,7 @@ def visualize_mesh(V: dolfinx.fem.functionspace):
 
     p.add_mesh(grid, style="wireframe", color="k")
 
+    p.view_yx()
     p.show_axes()
+    p.camera.roll -=90
     p.show()

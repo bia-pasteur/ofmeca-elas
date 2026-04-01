@@ -9,14 +9,14 @@ from mechanics.src.utils import remap
 
 def save_of_strain_traction(
     images: List[np.ndarray],
-    displacements:List[np.ndarray],
     results:Dict,
     save_path:Path,
-    pixel_size:float,
     implot: int,
     vmaxstrain: float,
-    scale: float,
-    step: int,
+    scale_flow: float, 
+    step_flow: int,
+    scale_traction: float,
+    step_traction: int,
     threshold_inf: float,
     threshold_sup: float,
     show=False):
@@ -27,16 +27,16 @@ def save_of_strain_traction(
         - The GT stress and the optical-flow base computed stress for the selected image implot
 
     Args:
-        displacements (List[np.ndarray]): List of ground-truth displacement fields
         images (List[np.ndarray]): List of grayscale images corresponding to each displacement field.
         results (Dict): Results dictionary from `compute_of_strain_traction` containing GT and 
             optical-flow-based data (flows, strain, stress, etc.)
         save_path (Path): Path to the directory or filename where the .png figure will be saved.
-        pixel_size (float): Conversion factor from pixel to physical units (e.g., µm/pixel).
         implot (int): Index of the image to plot from the input lists.
         vmaxstrain (float): Maximum strain value for color normalization in plots.
-        scale (float): Scaling factor for quiver or vector field visualization.
-        step (int): Sampling step for displaying displacement vectors (e.g., 1 = every pixel, 2 = every second pixel).
+        scale_flow (float): Scaling factor for displacement field visualization.
+        step_flow (float): Sampling factor for discplement field vector (e.g., 1 = every pixel, 2 = every second pixel).
+        scale_traction (float): Scaling factor for traction force field visualization.
+        step_traction (int): Sampling step for displaying traction vectors (e.g., 1 = every pixel, 2 = every second pixel).
         threshold_inf (float): Lower intensity threshold for image display.
         threshold_sup (float): Upper intensity threshold for image display.
         show (bool, optional): If True, displays the generated figure interactively in addition to saving it.
@@ -51,7 +51,7 @@ def save_of_strain_traction(
 
     name_map = {
         "GT": "Ground Truth",
-        "fista": "Proposed",
+        "fista": "Ours",
         "hs": "HS",
         "ilk": "ILK",
         "tv_l1": "TV-L1",
@@ -69,31 +69,43 @@ def save_of_strain_traction(
     gs = gridspec.GridSpec(3, num_methods, figure=fig,
                            wspace=0.05, hspace=0.05)
 
-    gt = displacements[implot][0, 0] * pixel_size
-    data_list_of = [gt] + [results[implot]["flows"][m][0, 0] for m in methods]
+    flows = [results[implot]["flows"]["gt"][:,0]] + [results[implot]["flows"][m][:,0] for m in methods]
 
-    vmin = min(np.min(d) for d in data_list_of)
-    vmax = max(np.max(d) for d in data_list_of)
-
-    ims = []
+    quiv_line = None
     axes_line = []
 
-    for j, data in enumerate(data_list_of):
+    for j, flow in enumerate(flows):
         ax = fig.add_subplot(gs[0, j])
-        im = ax.imshow(data, cmap="inferno", vmin=vmin, vmax=vmax)
-        ims.append(im)
         axes_line.append(ax)
-        ax.set_xticks([])
-        ax.set_yticks([])
 
-        title = "GT" if j == 0 else method_names[j - 1]
+        H, W = images[implot][0].shape[:2]
+        y, x = np.mgrid[0:H:step_flow, 0:W:step_flow]
+
+        v = flow[0, ::step_flow, ::step_flow]
+        u = flow[1, ::step_flow, ::step_flow]
+        norm = np.sqrt(u**2 + v**2)
+
+        ax.imshow(images[implot][0],
+                  cmap='gray',
+                  zorder=0)
+
+        quiv_line = ax.quiver(
+            x, y, u, v, norm,
+            cmap='inferno', clim=(0, norm.max()),
+            angles='xy', scale_units='xy', scale=scale_flow, zorder=1, width=0.007
+        )
+
+        title = title = "GT" if j == 0 else method_names[j - 1]
         ax.set_title(title, fontsize=18)
+        ax.axis('off')
         if j == 0:
-            ax.set_ylabel("Vertical displacement", fontsize=18, rotation=90, labelpad=10)
+            ax.text(-0.1, 0.5, "Displacement", fontsize=18, rotation=90,
+                    va="center", ha="center", multialignment="center", transform=ax.transAxes)
 
-    cbar = fig.colorbar(ims[-1], ax=axes_line, orientation="vertical",
-                        fraction=0.03, pad=0.02, shrink=0.95)
-    cbar.ax.tick_params(labelsize=10)
+    if quiv_line is not None:
+        cbar = fig.colorbar(quiv_line, ax=axes_line, orientation="vertical",
+                            fraction=0.03, pad=0.02, shrink=0.95)
+        cbar.ax.tick_params(labelsize=10)
 
     data_list_strain = [results[implot]["deformation"]["gt"][0]] + [results[implot]["deformation"][m][0] for m in methods]
 
@@ -125,10 +137,10 @@ def save_of_strain_traction(
         axes_line.append(ax)
 
         H, W = images[implot][0].shape[:2]
-        y, x = np.mgrid[0:H:step, 0:W:step]
+        y, x = np.mgrid[0:H:step_traction, 0:W:step_traction]
 
-        u = field[0, ::step, ::step]
-        v = field[1, ::step, ::step]
+        u = field[0, ::step_traction, ::step_traction]
+        v = field[1, ::step_traction, ::step_traction]
         norm = np.sqrt(u**2 + v**2)
 
         mask = (norm >= threshold_inf) & (norm <= threshold_sup)
@@ -143,7 +155,7 @@ def save_of_strain_traction(
         quiv_line = ax.quiver(
             x, y, v, u, norm,
             cmap='inferno', clim=(0, norm.max()),
-            angles='xy', scale_units='xy', scale=scale, zorder=1
+            angles='xy', scale_units='xy', scale=scale_traction, zorder=1
         )
 
         ax.axis('off')
@@ -161,7 +173,7 @@ def save_of_strain_traction(
         
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    fig.savefig(save_path, transparent='True', dpi=150, bbox_inches="tight")
     plt.close(fig)
     
 
@@ -976,7 +988,7 @@ def plot_pos_dis_strain_trac_micro_image(
     
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    fig.savefig(save_path, transparent='True', dpi=150, bbox_inches="tight")
     
     
 def plot_field(image: np.ndarray, flow: np.ndarray, step: int, scale: float):   

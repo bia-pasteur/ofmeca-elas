@@ -21,7 +21,6 @@ def process_test_reg(
     image_for_test_reg: int, 
     mu: float, 
     lambda_: float, 
-    pixel_size: float, 
     of_for_computation: (List[Callable]), 
     params_of: List[Dict], 
     global_flow: bool,
@@ -41,7 +40,6 @@ def process_test_reg(
             Expects files named `<image_for_test_reg>_img.npy` and `<image_for_test_reg>_ugt.npy` in `exp_folder`.
         mu (float): Lamé parameter
         lambda_ (float): Lamé parameter 
-        pixel_size (float): Size of one pixel in physical units, used for spatial scaling.
         of_for_computation (List[Callable]): List of optical flow functions to evaluate. 
         params_of (List[Dict]): List of parameter objects or dictionaries corresponding to each optical flow method in `of_for_computation`.
         factors_for_reg (List[float]): List of multiplicative scaling factors applied to regularization-related parameters for sensitivity testing.
@@ -102,7 +100,6 @@ def process_test_reg(
         results_exp = compute_of_strain_traction(
             images=images,
             displacements=displacements,
-            pixel_size=pixel_size,
             mu=mu,
             lambda_=lambda_,
             of_functions=of_for_computation, 
@@ -124,7 +121,6 @@ def process_noise(
     noise_path:Path, 
     mu:float, 
     lambda_:float, 
-    pixel_size: float, 
     of_for_computation: List[Callable], 
     params_for_computation: List[Dict], 
     global_flow: bool
@@ -140,7 +136,6 @@ def process_noise(
         noise_path (Path): Path to the experiment folder containing the increasingly versions of the same image.
         mu (float): Lamé parameter
         lambda_ (float): Lamé parameter 
-        pixel_size (float): Size of one pixel in physical units, used for spatial scaling.
         of_for_computation (List[Callable]): List of optical flow functions to evaluate. 
         params_of (List[Dict]): List of parameter dictionaries corresponding to each function in `of_functions`.
 
@@ -174,7 +169,6 @@ def process_noise(
     results = compute_of_strain_traction(
         images=images,
         displacements=displacements,
-        pixel_size=pixel_size,
         mu=mu,
         lambda_=lambda_,
         of_functions=of_for_computation, 
@@ -219,16 +213,9 @@ def main(
     Runs a regularization parameter sensitivity analysis and a noise sensitivity analysis for optical flow-based strain and traction estimation.
 
     Args:
-        plot_parameters (PlotParams): Configuration for visualization and result plotting (unused)
         optical_flow (OpticalFlowParams): Configuration object containing parameter sets for each supported optical flow method
-        general (GeneralParams): General configuration including paths for result storage and experiment control flags.
-        geometry (GeometryParams): Physical and spatial settings of the image domain, including the number of pixels (`n`), 
-            the physical domain range (`x_range`), and total physical length (`physical_length`),
-            used to compute `pixel_size`.
-        experiment (Experiment): Definition of which case(s) to process, including traction force `T`,
-            Young’s modulus `E`, Poisson’s ratio `ν`, experiment index `exp_ind`,
-            and optionally a specific `image_id`.
-            Also includes the list `of_funcs` specifying which optical flow methods to run.
+        general (GeneralParams): General configuration (mainly result storage)
+        reg_exp (RegExperiment): Parameters of the regularization experiment (T, E, nu...)
 
     Raises:
         ValueError: 
@@ -252,13 +239,11 @@ def main(
         of_func, of_params = of_methods[of_func_name]
         of_for_computation.append(of_func)
         params_for_computation.append(of_params)
-        
-    pixel_size = general.n / ((general.x_range[1]-general.x_range[0])*general.physical_length)
     
     rmse_acc_reg = defaultdict(lambda: defaultdict(list))
     
-    exp_folder = Path(f"data/experiment_1/T_{reg_exp.T}_E_{reg_exp.E}_nu_{reg_exp.nu}")
-    img_indices = sorted(int(f.stem.replace("_img", "")) for f in exp_folder.glob("*_img.npy"))
+    exp_folder = Path(f"data/elas/experiment_1/T_{reg_exp.T}_E_{reg_exp.E}_nu_{reg_exp.nu}")
+    img_indices = sorted((f.stem.replace("_img", "")) for f in exp_folder.glob("*_img.npy"))
     
     mu_reg, lambda_reg = compute_lame(reg_exp.E, reg_exp.nu)
     
@@ -268,7 +253,6 @@ def main(
             image_for_test_reg=imgind,
             mu=mu_reg,
             lambda_=lambda_reg,
-            pixel_size=pixel_size,
             of_for_computation=of_for_computation,
             params_of=params_for_computation,
             factors_for_reg=reg_exp.factors ,
@@ -299,7 +283,6 @@ def main(
             noise_path=noise_path,
             mu=mu_noise, 
             lambda_=lambda_noise,
-            pixel_size=pixel_size,
             of_for_computation=of_for_computation,
             params_for_computation=params_for_computation, 
             global_flow=optical_flow.global_flow

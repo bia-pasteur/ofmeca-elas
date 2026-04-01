@@ -20,23 +20,16 @@ def process_image(
     micro_exp: MicroExperiment
 ) -> Dict | List[Dict]:
     """
-    Process a specific simulation or experimental case by computing optical flow–based strain 
-    and traction fields, optionally saving visualization plots.
-    
+    Process a microscopy image of a cell by computing optical flow–based 
+    strain and traction fields, optionally saving visualization plots.
+
     Args:
+        image (Path): Path to the microscopy image
+        maskcell (np.ndarray): Mask of the cell
         results_dir (Path): Directory where results (plots and data) will be saved.
-        pixel_size (float): Physical size of one pixel in the images, used for spatial scaling.
         of_for_computation (List[Callable]): List of optical flow algorithms (functions) to apply for displacement computation.
         params_for_computation (List[Dict]): List of parameter dictionaries corresponding to each optical flow method.
-        micro_exp (MicroExperiment): Parameters related to the experiment, such as some plotting parameters
-
-    Returns:
-        None
-
-    Notes:
-        - The function computes the Lamé coefficients `(μ, λ)` from `(E, ν)`.  
-        - Results are visualized and saved. 
-        - Timing information is printed to the console for performance tracking.
+        micro_exp (MicroExperiment): Parameters of the image of interest
     """
         
     mu, lambda_ = compute_lame(micro_exp.E, micro_exp.nu)
@@ -85,22 +78,12 @@ def main(
 
     Args:
         optical_flow (OpticalFlowParams): Configuration object containing parameter sets for each supported optical flow method
-        general (GeneralParams): General configuration including paths for result storage and experiment control flags, as well as physical and spatial settings for the image domain
+        general (GeneralParams):General configuration (mainly result storage)
         micro_exp (MicroExperiment): Parameters related to the experiment, such as the path to the image file, and some plotting parameters
 
     Raises:
         ValueError:
             - If an unknown optical flow method name is provided in `experiment.of_funcs`.
-
-    Returns:
-        None:
-            Results are saved to disk in the format of a PNG plots visualizing RMSE tables and, optionally, scatter comparisons.
-
-    Notes:
-        - The mapping of optical flow methods is defined internally:
-            `"farneback"`, `"hs"`, `"tvl1"`, `"ilk"`, `"fista"`.
-        - The CLI entry point is automatically created with `jsonargparse.auto_cli`,
-          enabling the script to be run directly from the command line.
     """
 
     img, _ = load_order_clean(micro_exp.path)
@@ -134,6 +117,6 @@ def main(
         params_for_computation.append(of_params)
     
     process_image(image=image, maskcell=maskcell, results_dir=Path(general.results_dir), of_for_computation=of_for_computation, params_for_computation=params_for_computation, micro_exp=micro_exp)
-            
+
 if __name__ == "__main__":
     jsonargparse.auto_cli(main, as_positional=False)

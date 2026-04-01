@@ -1,4 +1,6 @@
-elastic_simu:
+elas_simu:
+  img_paths: ['data/img_masks/t000.tif', 'data/img_masks/t066.tif']
+  masks_paths: ['data/img_masks/mask000.tif', 'data/img_masks/mask066.tif']
   t_end: 1
   num_time_steps: 2
   eta: 0
@@ -8,4 +10,3 @@ elastic_simu:
   traction_zone: [50, 100, 150, 200]
   youngs_modulus: [500, 1000, 1500, 2000]
   nu: [0.2, 0.25, 0.3, 0.4]
-  seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]

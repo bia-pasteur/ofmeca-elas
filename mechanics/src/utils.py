@@ -252,7 +252,6 @@ def rmse(u: np.ndarray, h: np.ndarray) -> float:
     mse = np.mean(diff ** 2) 
     return np.sqrt(mse)
 
-
 def results_to_df(results: dict | list[dict]) -> pd.DataFrame:
     """
     Converts optical flow evaluation results into a formatted pandas DataFrame.

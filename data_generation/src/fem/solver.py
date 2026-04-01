@@ -1,17 +1,18 @@
 """Solves the FEM problem"""
 
 # pylint: disable=invalid-name
-from typing import Callable, List, Union, Dict, Optional
+from typing import Callable, List, Dict, Optional
 import ufl
 import numpy as np
+import random
 import dolfinx
 from dolfinx import fem, mesh, default_scalar_type
 from dolfinx.fem.petsc import assemble_vector, assemble_matrix, apply_lifting, set_bc
 from ufl import inner, TrialFunction, TestFunction
-from data_generation.src.mesh.creation import create_cell_like_shape
-from shapely import Polygon, contains_xy, Point, plotting
+from shapely import Polygon, contains_xy, minimum_bounding_radius
+from shapely.affinity import translate
 from petsc4py import PETSc
-import matplotlib.pyplot as plt
+from data_generation.src.mesh.creation import create_cell_like_shape
 
 def strain(u: ufl.Argument) -> ufl.Form:
     """
@@ -75,11 +76,10 @@ def create_dirichlet(
     msh: mesh.Mesh, 
     dfacets: callable, 
     V: fem.FunctionSpace, 
-    pipette_radius: float, 
-    pipette_center: tuple, 
-    boundary_x: np.ndarray = None, 
-    boundary_y: np.ndarray = None, 
-    physical_length: float = None
+    boundary_x: np.ndarray, 
+    boundary_y: np.ndarray, 
+    zone_radius: float = None, 
+    zone_center: tuple = None
     ) -> fem.DirichletBC:
     """
     Creates a Dirichlet BC on the mesh boundary outside the pipette region.
@@ -87,7 +87,7 @@ def create_dirichlet(
     fdim = msh.topology.dim - 1
     boundary_facets = mesh.locate_entities_boundary(
         msh, fdim,
-        lambda xx: dfacets(xx, pipette_center, pipette_radius, boundary_x, boundary_y, physical_length)
+        lambda xx: dfacets(xx, boundary_x, boundary_y, zone_center, zone_radius)
     )
 
     u_dirichlet = np.array([0, 0, 0], dtype=default_scalar_type)
@@ -102,19 +102,22 @@ def finite_elements_force_zone(
     dirichlet: Callable[[np.ndarray, tuple, float, float], np.ndarray],
     t_end: float,
     num_time_steps: int,
-    zone_radius: float,
-    zone_center: tuple,
-    physical_length: float,
     traction_constant: fem.Function,
-    youngs_modulus: Union[float, List[float]],
-    nu: Union[float, List[float]],
-    eta: Union[float, List[float]],
-    x_coords = None,
-    y_coords = None,
-    subparts: Optional[Dict] = None
+    youngs_modulus: float,
+    nu: float,
+    eta: float,
+    x_coords: np.ndarray,
+    y_coords: np.ndarray,
+    zone_radius: float = None,
+    zone_center: tuple = None,
+    physical_length: float = None,
+    subparts: Optional[Dict] = None, 
+    seed: 1 = None
 ) -> List[np.ndarray]:
     """
-    Performs a micropipette aspiration simulation with linear viscoelasticity, with optional varying material parameters.
+    Performs a simulation of a Kelvin-Voigt viscoelastic or linear elastic deformation
+    on a mesh representing a cell under constant traction force with possible variation 
+    of the Young's modulus and viscosity inside the cell.
 
     Args:
         msh (mesh.Mesh): Finite element mesh of the computational domain
@@ -123,24 +126,28 @@ def finite_elements_force_zone(
         dirichlet (Callable): Function defining Dirichlet BCs at the pipette
         t_end (float): Total simulation time
         num_time_steps (int): Number of discrete time steps
-        zone_radius (float): Radius of the active force zone.
-        zone_center (tuple): Center coordinates of the force zone.
-        physical_length (float): Characteristic physical length (scaling parameter)
         traction_constant (fem.Function): Traction force applied on the pipette boundary
-        youngs_modulus (float | list): Young’s modulus (scalar or per-region list)
-        nu (float | list): Poisson’s ratio (scalar or per-region list)
-        eta (float | list): Viscosity (scalar or per-region list)
-        regions (list, optional): Radial subregions [(rmin, rmax), ...]
-                                  for spatially varying material parameters
+        youngs_modulus (float): Young’s modulus of the cell, outside of eventual subparts
+        nu (float): Poisson's ratio of the cell, outside of eventual subparts
+        eta (float): Viscosity of the cell, outside of eventual subparts
+        x_coords (np.ndarray): x-coordinates of the boundary of the cell
+        y_coords (np.ndarray): y-coordinates of the boundary of the cell
+        zone_radius (float, optional): If the simulation isn't run on real cell images, the radius of the zone of aspiration. Defaults to None.
+        zone_center (tuple, optional): If the simulation isn't run on real cell images, the center of the zone of aspiration. Defaults to None.
+        physical_length (float, optional): If the simulation isn't run on real cell images, the physical length of the. Defaults to None.
+        subparts (Optional[Dict], optional): Dictionary of subpart definitions. Each value must contain: 
+                                            - 'young's_modulus' (float): Young's modulus of the subpart
+                                            - 'eta.             (float): viscoscisty of the subpart.
+                                            Note : for now, the subparts are randomly generated. Defaults to None.
+        seed (1, optional): Random seed for shape generation in the subparts. Defaults to None.
 
     Returns:
-        List[fem.Function]: Displacement field at each time step
+        List[np.ndarray]: Displacement field at each time step
     """
-    if msh.topology.dim == 2 and (x_coords is None or y_coords is None):
-        raise ValueError("x_coords and y_coords cannot be None in 2D")
     # Define the time step
     delta_t = t_end/num_time_steps
-    # Compute Lamé parameters
+    
+    # Function to compute Lamé parameters
     def lame(E__, nu__, eta__):
         # Elastic Lamé parameters
         lambda_e = E__*nu__ / ((1+nu__)*(1-2*nu__))
@@ -151,6 +158,7 @@ def finite_elements_force_zone(
         mu_v = eta__/2
         return lambda_e, mu_e, lambda_v, mu_v
 
+    # Assign interior elements a Young's modulus, Poisson's ratio and viscosity
     F = fem.functionspace(msh, ("DG", 0))
     youngs_modulus_ = fem.Function(F)
     eta_ = fem.Function(F)
@@ -159,29 +167,51 @@ def finite_elements_force_zone(
     nu_.x.array[:] = nu
     eta_.x.array[:] = eta
     
+    # If subparts of varying Young's modulus and viscosity are defined, create them
     if subparts is not None:
-        subpart_polygon = None
-        for _, subpart in subparts.items():
-            rng = np.random.default_rng(seed=subpart['seed'])
-            x_subpart, y_subpart = create_cell_like_shape(50, subpart['radius'], subpart['noise_amplitude'], subpart['num_fourier_modes'], rng, r_min_ratio=0.1)
-            x_center, y_center = subpart['center']
-            coords = list(zip(x_subpart + x_center, y_subpart + y_center))
-            subpart_polygon = Polygon(coords)
+        polygon_cell = Polygon(zip(x_coords, y_coords))
+        minx, miny, maxx, maxy = polygon_cell.bounds
+        min_rad = minimum_bounding_radius(polygon_cell)
+        sp_polygons = {}
+        for key, subpart in subparts.items():
+            rng = np.random.default_rng(seed=seed+key)
+            x_sp, y_sp = create_cell_like_shape(
+                50, base_radius=(min_rad/4), noise_amplitude=2, num_fourier_modes=30, rng=rng, r_min_ratio=0.1
+            )
+            x_c, y_c = random.uniform(minx, maxx), random.uniform(miny, maxy)
+            sp_polygon = Polygon(list(zip(x_sp + x_c, y_sp + y_c)))
+            sp_polygons[key] = sp_polygon
+        
+        rng = np.random.default_rng(seed=1000)
+        minx, miny, maxx, maxy = polygon_cell.bounds
+        
+        for key in sp_polygons:
+            for _ in range(10000):
+                dx = rng.uniform(minx, maxx)
+                dy = rng.uniform(miny, maxy)
+
+                centroid = sp_polygons[key].centroid
+                shifted = translate(sp_polygons[key], dx - centroid.x, dy - centroid.y)
+                shifted_buffer = shifted.buffer(0.1)
+
+                if not polygon_cell.contains(shifted_buffer):
+                    continue
+                
+                if any(shifted_buffer.intersects(sp_polygons[i]) for i in sp_polygons if i != key):
+                    continue
+                
+                sp_polygons[key] = shifted
+                break 
+            
+        dim = msh.topology.dim
+        for key, subpart in subparts.items():
+            sp_polygon = sp_polygons[key]
             ym_sp = subpart['youngs_modulus']
             eta_sp = subpart['eta']
-            def omega_sp(x):
-                return contains_xy(subpart_polygon, x[0], x[1])
             
-            # X = msh.geometry.x 
-            # inside = contains_xy(subpart_polygon, X[:, 0], X[:, 1])
-            # plt.figure()
-            # plt.plot(*subpart_polygon.exterior.xy, 'k-', linewidth=2)
-            # plt.scatter(X[~inside, 0], X[~inside, 1], s=5, color="lightgray")
-            # plt.scatter(X[inside, 0], X[inside, 1], s=10, color="red")
-            # plt.legend()
-            # plt.show()
+            def omega_sp(x, poly=sp_polygon):
+                return contains_xy(poly, x[0], x[1])
             
-            dim = msh.topology.dim
             cells_i = dolfinx.mesh.locate_entities(msh, dim, omega_sp)
             youngs_modulus_.x.array[cells_i] = np.full_like(cells_i, ym_sp, dtype=default_scalar_type)
             eta_.x.array[cells_i] = np.full_like(cells_i, eta_sp, dtype=default_scalar_type)
@@ -203,8 +233,7 @@ def finite_elements_force_zone(
     displacement_history = []
     
     # Create dirichlet conditions 
-    bc = create_dirichlet(msh, dirichlet, V, zone_radius, zone_center, x_coords, y_coords, physical_length)
-    
+    bc = create_dirichlet(msh, dirichlet, V, x_coords, y_coords, zone_radius, zone_center)
     # Create the trial and test function
     u, v = TrialFunction(V), TestFunction(V)
 

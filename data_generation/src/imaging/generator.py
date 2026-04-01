@@ -3,19 +3,19 @@
 # pylint: disable=invalid-name
 # pylint: disable=line-too-long
 # pylint: disable=trailing-whitespace
-
 from typing import Callable, Union, List, Tuple, Optional, Dict
 import os
 import numpy as np
+import tifffile
+import skimage
+import matplotlib.pyplot as plt
 import dolfinx
-from dolfinx import fem, default_scalar_type
+from noise import pnoise2
+from dolfinx import fem, default_scalar_type, mesh
 from dolfinx.mesh import compute_midpoints
 from petsc4py.PETSc import ScalarType # pylint: disable=no-name-in-module
-import tifffile
-from noise import pnoise2
-from data_generation.src.mesh.creation import create_mesh_file
+from data_generation.src.mesh.creation import create_mesh_file, create_cell_like_shape
 from data_generation.src.fem.solver import finite_elements_force_zone
-
 
 def closest_cell(
     mesh: dolfinx.mesh.Mesh,
@@ -43,48 +43,45 @@ def closest_cell(
 def interpolation(
     mesh: dolfinx.mesh.Mesh,
     u: fem.Function,
-    n: int,
     x_range: Tuple[float, float],
     y_range: Tuple[float, float],
-    z_range: Optional[Tuple[float, float]] = None
+    z_range: Optional[Tuple[float, float]] = None,
 ) -> np.ndarray:
     """
-    Interpolates a finite element vector field `u` on a regular 2D or 3D grid.
+    Interpolates a finite element vector field u on a regular 2D or 3D grid.
 
     Args:
-        mesh (dolfinx.mesh.Mesh): Computational mesh where `u` is defined.
-        u (dolfinx.fem.Function): Vector-valued FE function (displacement field).
-        n (int): Number of grid points along each axis of the interpolation grid.
-        x_range (tuple): (xmin, xmax) bounds of interpolation domain along x-axis.
-        y_range (tuple): (ymin, ymax) bounds of interpolation domain along y-axis.
-        z_range (tuple, optional): (zmin, zmax) bounds along z-axis. If None → 2D interpolation.
+        mesh (dolfinx.mesh.Mesh): Computational mesh where u is defined.
+        u (fem.Function): Vector-valued FE function (displacement field)
+        x_range (Tuple[float, float]): (xmin, xmax) bounds of interpolation domain along x-axis.
+        y_range (Tuple[float, float]): (ymin, ymax) bounds of interpolation domain along y-axis.
+        z_range (Optional[Tuple[float, float]]): (zmin, zmax) bounds along z-axis. If None → 2D interpolation. Defaults to None.
 
     Returns:
         np.ndarray: Array of interpolated values.
-            - Shape (n, n, 2) for 2D interpolation
-            - Shape (n, n, n, 3) for 3D interpolation
+            - Shape (H, W, 2) for 2D interpolation
+            - Shape (H, W, D, 3) for 3D interpolation
     """
-    xmin, xmax = x_range
-    ymin, ymax = y_range
+
+    H, W = y_range[1], x_range[1]
     
-    x = np.linspace(xmin, xmax, n)
-    y = np.linspace(ymin, ymax, n)
+    x = np.linspace(x_range[0], x_range[1], W)  
+    y = np.linspace(y_range[0], y_range[1], H) 
     
     if z_range is None:
         # 2D case
         X, Y = np.meshgrid(x, y, indexing='xy')
-        #X = np.flip(X, axis=0)
         pixels = np.stack((X, Y, np.zeros_like(X)), axis=-1)
         dim = 2
-        val_shape = (n, n, 2)
+        val_shape = (H, W, 2)
     else:
         # 3D case
-        zmin, zmax = z_range
-        z = np.linspace(zmin, zmax, n)
-        X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+        D = z_range[1]
+        z = np.linspace(z_range[0], z_range[1], D)  
+        X, Y, Z = np.meshgrid(x, y, z, indexing='xy')
         pixels = np.stack((X, Y, Z), axis=-1)
         dim = 3
-        val_shape = (n, n, n, 3)
+        val_shape = (H, W, D, 3)
 
     flattened_pix = pixels.reshape(-1, 3)
     
@@ -110,14 +107,16 @@ def interpolation(
 
     # Fill the output array
     val = np.zeros(val_shape)
+    mask = np.zeros(val_shape)
     count = 0
 
     if dim == 2:
-        for i in range(n):
-            for j in range(n):
+        for i in range(H):
+            for j in range(W):
                 if count < len(pixels_interpolation):
                     if np.array_equal(pixels[i, j], pixels_interpolation[count]):
                         val[i, j, :] = u_values[count, :2]
+                        mask[i, j, :] = 1
                         count += 1
     else:
         for i in range(n):
@@ -126,59 +125,66 @@ def interpolation(
                     if count < len(pixels_interpolation):
                         if np.array_equal(pixels[i, j, k], pixels_interpolation[count]):
                             val[i, j, k, :] = u_values[count, :]
+                            mask[i, j, k, :] = 1
                             count += 1
 
-    return val
+    return val, mask
 
 
 def dirichlet(
     nodes: np.ndarray, 
-    pipette_center: tuple, 
-    pipette_radius: float, 
     boundary_x: np.ndarray = None, 
     boundary_y: np.ndarray = None,
-    physical_length: float = None) -> np.ndarray:
+    zone_center: tuple = None, 
+    zone_radius: float = None
+) -> np.ndarray:
     """
-    Determines if nodes are on the boundary (matching x_coords, y_coords)
-    and outside the pipette zone in y-direction.
-    
+    Determines if nodes are on the Dirichlet boundary. 
+    For cells defined using random shapes, this means having coordinates matching boundary_x, boundary_y and 
+    being outside the zone in the y-direction.
+    For cells defined using real images, this is defined using the quantiles. 
+
     Args:
         nodes (np.ndarray): Coordinates of points on facets, shape (d, N)
-        pipette_center (tuple): Coordinates of the pipette center (x0, y0, z0)
-        pipette_radius (float): Radius of the pipette
-        boundary_x (np.ndarray): x-coordinates of the boundary points
-        boundary_y (np.ndarray): y-coordinates of the boundary points
-        eps (float): tolerance for matching boundary points
+        boundary_x (np.ndarray, optional): x-coordinates of the boundary points. Defaults to None.
+        boundary_y (np.ndarray, optional): y-coordinates of the boundary points. Defaults to None.
+        zone_center (tuple, optional): Center of the zone of aspiration. Defaults to None.
+        zone_radius (float, optional): Radius of the zone of aspiration. Defaults to None.
 
     Returns:
         np.ndarray: Boolean array of length N, True means Dirichlet should apply
     """
-    x, y, z = nodes
     
-    if np.all(z == 0) and (boundary_x is None or boundary_y is None):
-        raise ValueError("boundary_x and boundary_y cannot be None in 2D")
+    x, y, z = nodes
     n = x.shape[0]
 
-    if boundary_x is not None:
-        # Check if (x, y) is close to any boundary point
+    # If the mesh is defined from scratch using a random shape, the Dirichlet boundary is defined from the center of the zone
+    if zone_center is not None:
         on_boundary = np.zeros(n, dtype=bool)
         for bx, by in zip(boundary_x, boundary_y):
             on_boundary |= (np.isclose(x, bx) & np.isclose(y, by))
 
-        # Exclude pipette region along y
-        in_pipette = (y > 0) & (x >= -pipette_radius) & (x <= pipette_radius)
+        in_zone = (y > 0) & (x >= -zone_radius) & (x <= zone_radius)
 
-        # Dirichlet applies only to boundary points outside pipette
-        return np.logical_and(on_boundary, ~in_pipette)
-    x, y, z = nodes
-    x_zone, y_zone, z_zone = pipette_center
-    on_surface = np.isclose(x**2 + y**2 + z**2, physical_length**2)
-    distance_to_zone_center = np.sqrt((x-x_zone)**2 + (y - y_zone)**2 + (z-z_zone)**2)
-    out_of_zone = distance_to_zone_center >= 2*pipette_radius
-    return np.logical_and(on_surface, out_of_zone)
+        return np.logical_and(on_boundary, ~in_zone)
+    
+    # Else, the Dirichlet boundary is defined using the quantiles
+    else : 
+        n = x.shape[0]
+        q20, q80 = np.quantile(x, [0.20, 0.8])
+        q60 = np.quantile(y, 0.6)
+
+        mask_in = (x >= q20) & (x <= q80) & (y >= q60)
+
+        return ~mask_in 
 
 
-def create_intensities_perlin(mesh: dolfinx.mesh.Mesh, scale: float = 5.0, grain: int = 3, seed: int = 0) -> dolfinx.fem.Function:
+def create_intensities_perlin(
+    mesh: dolfinx.mesh.Mesh, 
+    scale: float = 5.0, 
+    grain: int = 3, 
+    seed: int = 0
+) -> dolfinx.fem.Function:
     """
     Create a discontinuous Galerkin (DG) function on the mesh where
     the cell-wise values follow a 2D Perlin noise pattern.
@@ -226,8 +232,49 @@ def create_intensities_perlin(mesh: dolfinx.mesh.Mesh, scale: float = 5.0, grain
     intensities.x.array[:] = intensities_vals
     return intensities
 
+def map_intensities_from_image(
+    mesh: dolfinx.mesh.Mesh, 
+    img: np.ndarray
+) -> dolfinx.fem.Function:
+    """
+    Create a discontinuous Galerkin (DG) function on the mesh where
+    the cell-wise values follow the brightness pattern of a cell image
 
-def deform_mesh(mesh: dolfinx.mesh.Mesh, u: dolfinx.fem.Function) -> dolfinx.mesh.Mesh:
+    Args:
+        mesh (dolfinx.mesh.Mesh): The input computational mesh.
+        img (np.ndarray): Image of a masked cell
+
+    Returns:
+        dolfinx.fem.Function: DG function representing the intensity of the cell image over the mesh.
+    """
+    Q = fem.functionspace(mesh, ("CG", 2))
+    intensities = fem.Function(Q)
+    num_cells = mesh.topology.index_map(mesh.topology.dim).size_local
+    coords = compute_midpoints(mesh, mesh.topology.dim, np.arange(num_cells))
+
+    values_per_cell = np.zeros(num_cells)
+    for i in range(num_cells):
+        x = int(coords[i,0])
+        y = int(coords[i,1])
+        values_per_cell[i] = img[y,x]
+    min_val, max_val = np.percentile(values_per_cell, [1, 99])  
+    values_per_cell = np.clip(values_per_cell, min_val, max_val)
+    values_per_cell = (values_per_cell - min_val) / (max_val - min_val)
+
+    dofmap = Q.dofmap
+    intensities_vals = np.zeros_like(intensities.x.array)
+    for cell_index in range(num_cells):
+        dofs = dofmap.cell_dofs(cell_index)
+        intensities_vals[dofs] = values_per_cell[cell_index]
+
+    intensities.x.array[:] = intensities_vals
+    return intensities
+
+
+def deform_mesh(
+    mesh: dolfinx.mesh.Mesh, 
+    u: dolfinx.fem.Function
+) -> dolfinx.mesh.Mesh:
     """
     Deform the input mesh according to a given displacement field.
 
@@ -262,24 +309,60 @@ def deform_mesh(mesh: dolfinx.mesh.Mesh, u: dolfinx.fem.Function) -> dolfinx.mes
     x += u_values
 
     return mesh
+
+
+def plot_boundary_conditions(msh, intensities, x_range, y_range, save_path):
+    """
+    Plots the image of the cell with the associated boundary conditions
+    
+    Args:
+        msh (_type_): _description_
+        intensities (_type_): _description_
+        x_range (_type_): _description_
+        y_range (_type_): _description_
+        save_path (_type_): _description_
+    """
+    original_image, mask_image = interpolation(msh, intensities, x_range, y_range)
+    contours = skimage.measure.find_contours(mask_image[:,:,0])
+    x = contours[0][:,1]
+    y = contours[0][:,0]
+
+    q20, q80 = np.quantile(x, [0.20, 0.8])
+    q60 = np.quantile(y, 0.6)
+
+    mask_in = (x >= q20) & (x <= q80) & (y >= q60)
+    mask_out = ~mask_in
+    
+    fig, ax = plt.subplots()
+    fig.subplots_adjust(left=0, bottom=0, right=1, top=1, wspace=None, hspace=None)
+
+    ax.imshow(original_image[:,:,0], 'gray')
+    ax.scatter(x[mask_in], y[mask_in], color='red', s=1, label='Neumann')
+    ax.scatter(x[mask_out], y[mask_out], color='blue', s=1, label='Dirichlet')
+    ax.axis('off')
+    plt.legend()
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0)
+        print(f"Figure saved to {save_path}")
+    plt.close()
   
   
 def create_image_simu(
     mesh_function: Callable,
-    physical_length: float,
     dirichlet_: Callable,
     t_end: float,
     num_time_steps: int,
-    zone_radius: float,
-    zone_center: tuple,
     traction_zone: float,
-    youngs_modulus: Union[float, List[float]],
-    nu: Union[float, List[float]],
-    eta: Union[float, List[float]],
-    n: int,
+    youngs_modulus: float,
+    nu: float,
+    eta: float,
     name: str,
-    x_range: Tuple[float, float],
-    y_range: Tuple[float, float],
+    img: np.ndarray=None,
+    x_range: Tuple[float, float]=None,
+    y_range: Tuple[float, float]=None,
+    physical_length: float=None,
+    zone_radius: float=None,
+    zone_center: tuple=None,
     z_range: Optional[Tuple[float, float]] = None,
     subparts: Optional[Dict] = None,
     num_points: Optional[float] = None,
@@ -287,7 +370,9 @@ def create_image_simu(
     num_fourier_modes: Optional[float] = None,
     lc=None,
     seed=1, 
-    grain=2
+    grain=2, 
+    n=None,
+    seed_image=None,
 ) -> Tuple[np.ndarray, str]:
     """
     Generate a sequence of simulated microscopy images based on a
@@ -329,10 +414,11 @@ def create_image_simu(
               shape (num_time_steps, n, n, 2) in 2D or (num_time_steps, n, n, n, 3) in 3D.
             - warped_image_path: Path to the saved multi-dimensional TIFF file.
     """
-
     rng = np.random.default_rng(seed=seed)
+    
     # Create the mesh
-    x_coords, y_coords, msh = create_mesh_file(physical_length, mesh_function, rng, num_points, noise_amplitude, num_fourier_modes, lc)
+    x_coords, y_coords, msh = create_mesh_file(mesh_function, img, physical_length, rng, num_points, noise_amplitude, num_fourier_modes, lc)
+    
     # Create the function space
     # Lagrange elements, degree 1 (linear elements), vector-valued function space (one function per spatial dimension (3))
     V = fem.functionspace(msh, ('Lagrange', 2, (msh.geometry.dim,)))
@@ -342,36 +428,61 @@ def create_image_simu(
     # We initialize everything at 0
     def cond_init(x):
         return np.array([0.0*x[0], 0.0*x[1], 0.0*x[2]], dtype=ScalarType)
+
+    # Get displacement when the force is applied on the zone
+    dis = finite_elements_force_zone(msh, V, cond_init, dirichlet_, t_end, num_time_steps, traction_constant,  youngs_modulus, nu, eta, x_coords, y_coords, zone_radius, zone_center, physical_length, subparts, seed_image)
     
     # Definition of the intensities on the mesh
-    intensities = create_intensities_perlin(msh, seed=seed, grain=grain)
+    if img is None: 
+        intensities = create_intensities_perlin(msh, seed=seed, grain=grain)
+        x_range = [0, n]
+        y_range = [0, n]
+        
+    else: 
+        intensities = map_intensities_from_image(msh, img)
+        x_range = [0, img.shape[1]]
+        y_range = [0, img.shape[0]]
     
-    # Create original image
-    original_image = interpolation(msh, intensities, n, x_range, y_range, z_range)[:,:,0]
-  
-    # Get displacement when the force is applied on the zone
-    dis = finite_elements_force_zone(msh, V, cond_init, dirichlet_, t_end, num_time_steps, zone_radius, zone_center, physical_length, traction_constant, youngs_modulus, nu, eta, x_coords, y_coords, subparts)
-    if z_range is None:
-        N, M = original_image.shape
-        warped_images = np.zeros((num_time_steps, N, M), dtype=np.float32)
-        u_list = np.zeros((num_time_steps, n, n, 2), dtype=np.float32)
-        uh_prev = fem.Function(V)
-        u_init = interpolation(msh, dis[1], n, x_range, y_range, z_range)
-        mask = (u_init != 0)
-        for time in range(num_time_steps):
-            uh = dis[time]
-            du = fem.Function(V)
-            du.x.array[:] = uh.x.array - uh_prev.x.array
-            u_list[time] = interpolation(msh, uh, n, x_range, y_range, z_range) * mask
-            msh = deform_mesh(msh, du)
-            warped_images[time] = interpolation(msh, intensities, n, x_range, y_range, z_range)[:, :, 0]
-            uh_prev.x.array[:] = uh.x.array
-        if eta == 0.0:
-            base_dir = os.path.join(os.path.dirname(__file__), "..", "..", "data/raw/elas")
-        else:
-            base_dir = os.path.join(os.path.dirname(__file__), "..", "..", "data/raw/viscoelas")
-        output_dir = os.path.join(base_dir, f"T_{traction_zone}_E_{youngs_modulus}_eta_{eta}")
-        os.makedirs(output_dir, exist_ok=True)
-        warped_image_path = os.path.join(output_dir, f"{name}.tiff")
-        tifffile.imwrite(warped_image_path, warped_images, metadata={'axes': 'TYX'}, imagej=True)
+    #plot_boundary_conditions(msh, intensities, x_range, y_range, Path(f"results/figures/boundary_{name}"))
+    
+    H, W = y_range[1], x_range[1]
+    warped_images = np.zeros((num_time_steps, H, W), dtype=np.float32)
+    u_list = np.zeros((num_time_steps, H, W, 2), dtype=np.float32)
+
+    uh_prev = fem.Function(V)
+    u_total = fem.Function(V) 
+    u_total.x.array[:] = 0.0
+
+    coords_initial = msh.geometry.x.copy()
+    coords_current = coords_initial.copy()
+
+    for time in range(num_time_steps):
+        uh = dis[time]
+        du = fem.Function(V)
+        du.x.array[:] = uh.x.array - uh_prev.x.array
+
+        u_total.x.array[:] += du.x.array
+
+        msh.geometry.x[:] = coords_initial
+        u_, _ = interpolation(msh, u_total, x_range, y_range, z_range)
+        u_list[time] = u_
+
+        msh.geometry.x[:] = coords_current
+        msh = deform_mesh(msh, du)
+        coords_current = msh.geometry.x.copy()
+
+        warped_im, _ = interpolation(msh, intensities, x_range, y_range)
+        warped_images[time] = warped_im[:, :, 0]
+
+        uh_prev.x.array[:] = uh.x.array
+        
+    if eta == 0.0:
+        base_dir = os.path.join(os.path.dirname(__file__), "..", "..", "data/raw/elas")
+    else:
+        base_dir = os.path.join(os.path.dirname(__file__), "..", "..", "data/raw/viscoelas")
+        
+    output_dir = os.path.join(base_dir, f"T_{traction_zone}_E_{youngs_modulus}_eta_{eta}_nu_{nu}")
+    os.makedirs(output_dir, exist_ok=True)
+    warped_image_path = os.path.join(output_dir, f"{name}.tiff")
+    tifffile.imwrite(warped_image_path, warped_images, metadata={'axes': 'TYX'}, imagej=True)
     return u_list, warped_image_path

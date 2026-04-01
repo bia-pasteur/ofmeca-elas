@@ -1,14 +1,16 @@
 elastic_exp:
   of_funcs: [fista, hs, farneback, ilk, tvl1]
-  T: null
-  E: null
-  nu: null
+  T: 100
+  E: 1000
+  nu: 0.4
   exp_ind: null
-  image_id: null
-  implot: 6
+  image_id: 'im_00_cell_003'
+  implot: 10
   vmaxstrain: 0.15
-  scale: 2
-  step: 1
+  scale_flow: 0.7
+  step_flow: 5
+  scale_traction: 4
+  step_traction: 1
   T_for_plot: 100
   E_for_plot: 1000
   nu_for_plot: 0.3

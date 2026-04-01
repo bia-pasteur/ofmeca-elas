@@ -8,10 +8,6 @@ from typing import List, Union
 class GeneralParams:
     """General parameters of the analysis"""
     results_dir: str
-    physical_length: float
-    x_range: List[float]
-    y_range: List[float]
-    n: int
 
 @dataclass
 class FistaParams:
@@ -86,8 +82,10 @@ class ElasticExperiment:
     """
     of_funcs: Union[List[str], str]
     vmaxstrain: float
-    scale: float
-    step: int
+    scale_flow: float
+    step_flow: int
+    scale_traction: float
+    step_traction: int
     T_for_plot: float
     E_for_plot: float
     nu_for_plot: float
@@ -98,7 +96,7 @@ class ElasticExperiment:
     E: float | None = None
     nu: float | None = None
     exp_ind: int | None = None
-    image_id: int | None = None
+    image_id: str | None = None
     implot : int | None = None
     
 @dataclass

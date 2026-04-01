@@ -2,9 +2,6 @@
 
 This project simulates micropipette aspiration experiments on elastic cells and analyzes them with several optical flow algorithms to estimate key mechanical quantities — displacement, strain, deformation, stress, and traction forces.
 
-It accompanies the ICIP 2026 submission:
-"A second-order regularized optical flow for mechanical quantification of cellular deformation."
-
 The goal is to evaluate and compare different optical flow methods for estimating cellular mechanics — identifying which one provides the most accurate and physically consistent results under varying noise levels and experimental conditions.
 
 Analysis on real microscopy images is also possible with the pipeline, but no comparison with ground truth values is available.
@@ -26,7 +23,6 @@ Computes mechanical quantities on the images using multiple optical flow algorit
 It is possible to :
 
 Run the full pipeline (generate data and perform the mechanical analysis), or
-
 Run only one part (e.g., use pre-generated data for analysis).
 
 
@@ -61,6 +57,8 @@ Install requirements
 
 ## Original images
 
+To create images of deforming elastic cells using real cell, we provide images containing several cells at `img_paths`, along with the segmentation masks at `masks_paths`.
+
 There are three simulation experiments:
 
 | Experiment | Variable | Fixed parameters | YAML keys |
@@ -69,15 +67,15 @@ There are three simulation experiments:
 | 2 | Young’s modulus `E` | T, ν | `youngs_modulus`, `t_for_ym_nu`, `nu_for_t_ym` |
 | 3 | Poisson’s ratio `ν` | T, E | `nu`, `t_for_ym_nu`, `ym_for_t_nu` |
 
-Each setting is repeated for all `seeds` (random initial shapes).
+Each setting is repeated for all cells present in the provided image.
 
 Run the code to create these images using 
 
-`./run_data_generation.sh`
+`python -m data_generation.examples.generate_elastic_datasets --config=data_generation/configs/elastic_params.yaml`
 
 Images and associated displacement are saved under:
 
-`data/experiment_i/T_<T>_E_<E>_nu_<nu>/`
+`data/elas/experiment_i/T_<T>_E_<E>_nu_<nu>/`
 
 ## Noisy images
 
@@ -85,20 +83,19 @@ To test the robustness to noise, Gaussian noise of increasing stds (defined by `
 
 Run the code to create these images using 
 
-`./run_noisy_data_simulation.sh`
+`python -m data_generation.examples.generate_noisy_elastic_datasets --config=data_generation/configs/noise_params.yaml`
 
 Images and associated displacements are saved under:
 
 `data/noise_experiment_T_<T>_E_<E>_nu_<nu>/img_<seed>)`
-
-## Note
-Other geometric and imaging parameters can be tuned in: `elastic_params.yaml`
 
 # Optical flow analysis and mechanical quantification
 
 Install requirements 
 
 `pip install -r mechanics/requirements.txt`
+
+## Sythetic images
 
 ### Edit: `mechanics/elastic_params.yaml`.
 
@@ -116,7 +113,7 @@ Results (RMSE tables, plots, etc.) are stored under `results/tables/` and `resul
 
 ### Plotting controls:
 
-In `elastic_exp.yaml`, the section plot_parameters defines which images to visualize:
+In `elastic_exp.yaml`, the section plot_parameters defines which image to visualize:
 
 `T_for_plot`, `E_for_plot`, `nu_for_plot`, `implot`
 
@@ -124,11 +121,23 @@ In `elastic_exp.yaml`, the section plot_parameters defines which images to visua
 
 Use `T`, `E`, `nu`, and `factors` in the `reg_exp.yaml` file to control the regularization experiments.
 
+## Microscopy images
+
+### Edit: mechanics/micro_exp.yaml
+
+- `of_funcs`: list of optical flow algorithms to apply.
+
+- Select the image to process via `im` (1 or 2), which controls the region of interest extracted from the .tif file.
+
+- Set the path to the .tif file via `path`.
+
+Results (plots) are stored under `results/plots/`
+
 ### Running the scripts:
 
 | Purpose | Command | Output |
 |-------------|-----------|------------|
-| Run experiments on regular images | `./run_exp.sh` | RMSE table + plots |
-| Run regularization robustness study | `./run_noise_exp.sh` | Combined plot (no saved tables) |
-| Run noise robustness study | `./run_reg_exp.sh` | Saved results + plots |
-| Run regularization and noise robustness study | `./run_reg_noise_exp.sh` | Saved results + plots |
+| Run experiments on regular images | `python -m mechanics.examples.run_elastic_exp --config=mechanics/configs/optical_flow.yaml --config=mechanics/configs/general.yaml --config=mechanics/configs/elastic_exp.yaml` | RMSE table + plots |
+| Run regularization robustness study | `python -m mechanics.examples.run_elastic_noise --config=mechanics/configs/optical_flow.yaml --config=mechanics/configs/general.yaml --config=mechanics/configs/noise_exp.yaml` | Combined plot (no saved tables) |
+| Run noise robustness study | `python -m mechanics.examples.run_elastic_reg --config=mechanics/configs/optical_flow.yaml --config=mechanics/configs/general.yaml --config=mechanics/configs/reg_exp.yaml` | Saved results + plots |
+| Run regularization and noise robustness study | `python -m mechanics.examples.run_elastic_noise_reg --config=mechanics/configs/optical_flow.yaml --config=mechanics/configs/general.yaml --config=mechanics/configs/reg_exp.yaml` | Saved results + plots |
