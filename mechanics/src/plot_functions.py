@@ -232,7 +232,7 @@ def save_scatter_comparison(
         )
         elif method_key=='Farneback': 
             axes[0].text(
-            x - 0.012, y - 0.2,
+            x - 0.012, y - 0.15,
             method_key,
             fontsize=10,
             ha="center", va="bottom", fontweight="bold"
