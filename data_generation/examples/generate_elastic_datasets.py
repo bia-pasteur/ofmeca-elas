@@ -1,7 +1,7 @@
 """Useful to generate synthetic images of deforming cells"""
 # pylint: disable=line-too-long
 # pylint: disable=trailing-whitespace
-from typing import Optional
+from typing import Optional, List, Tuple
 import os
 import numpy as np
 import tifffile
@@ -15,7 +15,7 @@ from data_generation.src.mesh.creation import gmsh_cell_from_image
 def create_elastic_cell_image(
     img: np.ndarray, 
     masks: np.ndarray, 
-    slices, 
+    slices: List[Optional[Tuple[slice, ...]]], 
     cell_ind: int, 
     t_end: int, 
     num_time_steps: int,
@@ -35,7 +35,9 @@ def create_elastic_cell_image(
     Args:
         img (np.ndarray): The original image of cells
         masks (np.ndarray): The mask of the cells in the image
-        slices (_type_): 
+        slices (List[Optional[Tuple[slice, ...]]]): A list of tuples of slices representing the bounding box of each 
+                                                    labeled object in the mask array. Each element corresponds to a 
+                                                    label (1-indexed), and is None if the label is not present in the mask.
         cell_ind (int): The index of the cell used to create the new image
         t_end (int): End time of the simulation
         num_time_steps (int): Numbe rof time steps of the simulation
