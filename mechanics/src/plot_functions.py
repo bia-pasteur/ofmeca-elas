@@ -218,35 +218,28 @@ def save_scatter_comparison(
         axes[0].scatter(x, y, color=method_colors[method_key],marker=method_markers[method_key], s=90)
         if method_key=='Proposed':
             axes[0].text(
-            x + 0.012, y - 0.0006,
+            x + 0.012, y + 0.04,
             method_key,
             fontsize=10,
             ha="center", va="bottom", fontweight="bold"
         )
         elif method_key=='HS': 
             axes[0].text(
-            x - 0.006, y - 0.0007,
+            x - 0.006, y + 0.04,
             method_key,
             fontsize=10,
             ha="center", va="bottom", fontweight="bold"
         )
         elif method_key=='Farneback': 
             axes[0].text(
-            x - 0.012, y - 0.0006,
-            method_key,
-            fontsize=10,
-            ha="center", va="bottom", fontweight="bold"
-        )
-        elif method_key=='ILK': 
-            axes[0].text(
-            x, y - 0.0025,
+            x - 0.012, y - 0.2,
             method_key,
             fontsize=10,
             ha="center", va="bottom", fontweight="bold"
         )
         else: 
             axes[0].text(
-            x, y + 0.0005,
+            x, y + 0.05,
             method_key,
             fontsize=10,
             ha="center", va="bottom", fontweight="bold"
@@ -262,14 +255,21 @@ def save_scatter_comparison(
         axes[1].scatter(x, y, color=method_colors[method_key],marker=method_markers[method_key], s=90)
         if method_key=='Proposed':
             axes[1].text(
-            x + 6, y - 0.15,
+            x + 0.8, y + 0.3,
             method_key,
             fontsize=10,
             ha="center", va="bottom", fontweight="bold"
         )
         elif method_key=='ILK': 
             axes[1].text(
-            x - 3.5, y - 0.15,
+            x - 2, y,
+            method_key,
+            fontsize=10,
+            ha="center", va="bottom", fontweight="bold"
+        )
+        elif method_key=='TV-L1': 
+            axes[1].text(
+            x, y - 1,
             method_key,
             fontsize=10,
             ha="center", va="bottom", fontweight="bold"

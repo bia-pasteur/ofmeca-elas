@@ -127,9 +127,13 @@ Use `T`, `E`, `nu`, and `factors` in the `reg_exp.yaml` file to control the regu
 
 - `of_funcs`: list of optical flow algorithms to apply.
 
-- Select the image to process via `im` (1 or 2), which controls the region of interest extracted from the .tif file.
+- Path to the .tif of the image file via `path`.
 
-- Set the path to the .tif file via `path`.
+- Parameters you need to perform the analysis on the image
+
+- Parameters for segmentation
+
+Note : the image might needs to be reshaped, and the right channels might need to be extracted, which is done inside the `main` function in `run_micro_image_exp.py`.
 
 Results (plots) are stored under `results/plots/`
 
