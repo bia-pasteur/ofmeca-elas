@@ -1,12 +1,14 @@
-"""Useful to compute mechanical quantities from the elastic simulation"""
+"""Useful to search best optical flow parameters from the elastic simulation"""
 
-from typing import List, Callable, Dict
+from typing import List, Callable, Dict, Any, Type
 from pathlib import Path
 import time
 import numpy as np
 import pickle
 import jsonargparse
-from mechanics.src.config import GeneralParams, OpticalFlowParams, ElasticExperiment
+import dataclasses
+import itertools
+from mechanics.src.config import GeneralParams, OpticalFlowParamsList, ElasticExperiment
 from mechanics.src.optical_flow.algorithms import farneback, hs_of, fista_of, tv_l1, ilk
 from mechanics.src.utils import compute_lame, find_experiment_folder, extract_E_from_folder, extract_T_from_folder, extract_nu_from_folder, load_images_and_displacements, results_to_df
 from mechanics.src.meca_of_pipeline import compute_of_strain_traction
@@ -166,25 +168,23 @@ def process_case(
     
     return results
 
-    
 def main(
-    optical_flow:OpticalFlowParams,
+    optical_flow_list:OpticalFlowParamsList,
     general:GeneralParams,
     elastic_exp: ElasticExperiment
 ):
     """
-    Main entry point for optical flow–based strain and traction analysis.
+    Main entry point for optical flow–based strain and traction analysis in order to get optimal 
+    parameters for optical flow algorithms.
 
     This function orchestrates the full processing pipeline:
       1. Initializes selected optical flow methods and their parameter sets.
-      3. Runs process_case either:
-         - For all experiments (1, 2, 3) if no specific parameters are given, or
-         - For a single experiment, case or image if exp_ind or (T, E, ν) and/or image_id are specified.
+      3. Runs process_case for experiment 1 for each combination of parameters to be tested.
       4. Saves the computed results as serialized `.pkl` files, CSV tables, and RMSE plots.
-      5. Optionally generates comparison scatter plots between experiments.
 
     Args:
-        optical_flow (OpticalFlowParams): Configuration object containing parameter sets for each supported optical flow method
+        optical_flow_list (OpticalFlowParamsList): Configuration object containing parameter sets for each supported optical flow method. 
+                                                   Parameters can be lists where each parameter combination must be tested.
         general (GeneralParams): General configuration (mainly result storage)
         elastic_exp (ElasticExperiment): Parameters of the experiment of interest
 
@@ -192,58 +192,51 @@ def main(
         ValueError:
             - If an unknown optical flow method name is provided in `experiment.of_funcs`.
             - If experiment parameters are inconsistently defined (handled within `process_case`).
-        FileNotFoundError:
-            If required image or displacement files are missing for a given `(T, E, ν, image_id)`.
     """
 
     of_methods = {
-        "farneback": (farneback, optical_flow.farneback),
-        "hs":        (hs_of, optical_flow.hs),
-        "tvl1":      (tv_l1, optical_flow.tvl1),
-        "ilk":       (ilk, optical_flow.ilk),
-        "fista":     (fista_of, optical_flow.fista),
+        "farneback": (farneback, optical_flow_list.farneback_list),
+        "hs":        (hs_of,    optical_flow_list.hs_list),
+        "tvl1":      (tv_l1,    optical_flow_list.tvl1_list),
+        "ilk":       (ilk,      optical_flow_list.ilk_list),
+        "fista":     (fista_of, optical_flow_list.fista_list),
     }
-    
-    of_for_computation, params_for_computation = [], []
-    
+
     for of_func_name in elastic_exp.of_funcs:
         if of_func_name not in of_methods:
             raise ValueError(f"Unknown optical flow method '{of_func_name}'")
 
         of_func, of_params = of_methods[of_func_name]
-        of_for_computation.append(of_func)
-        params_for_computation.append(of_params)
-    
-    if elastic_exp.scatter_comparison :
-        dfs = []
-    if all(x is None for x in (elastic_exp.T, elastic_exp.E, elastic_exp.nu, elastic_exp.exp_ind, elastic_exp.image_id)):
-        for exp_ind in [1, 2, 3]:
-            results_exp = process_case(elastic_params=elastic_exp, results_dir=Path(general.results_dir),of_for_computation=of_for_computation, params_for_computation=params_for_computation, global_flow=optical_flow.global_flow, exp_ind=exp_ind, T=elastic_exp.T, E=elastic_exp.E, nu=elastic_exp.nu, image_id=elastic_exp.image_id)
-            with open(Path(general.results_dir) / 'tables_dict' / f"results_exp_{exp_ind}.pkl", "wb") as f:
-                pickle.dump(results_exp, f)
-            df_exp = results_to_df(results_exp)
-            df_exp.to_csv(Path(general.results_dir) / 'tables_dict' / f"mean_rmse_experiment_{exp_ind}.csv", index=True)
-            save_table_rmse_with_std(df_exp, Path(general.results_dir) / 'plots' / f"mean_rmse_experiment_{exp_ind}.png")
-            if elastic_exp.scatter_comparison :
-                dfs.append(df_exp)
+
+        d            = dataclasses.asdict(of_params)
+        list_fields  = {k: v for k, v in d.items() if isinstance(v, list)}
+        fixed_fields = {k: v for k, v in d.items() if not isinstance(v, list)}
+        cls          = type(of_params)
+
+        combos = [
+            cls(**{**fixed_fields, **dict(zip(list_fields, vals))})
+            for vals in itertools.product(*list_fields.values())
+        ] if list_fields else [of_params]
         
-        if elastic_exp.scatter_comparison : 
-            save_scatter_comparison(dfs, Path(general.results_dir))
-            
-    else: 
-        results = process_case(elastic_params=elastic_exp, results_dir=Path(general.results_dir), of_for_computation=of_for_computation, params_for_computation=params_for_computation, global_flow=optical_flow.global_flow, exp_ind=elastic_exp.exp_ind, T=elastic_exp.T, E=elastic_exp.E, nu=elastic_exp.nu, image_id=elastic_exp.image_id)
-        if elastic_exp.image_id is None:
-            if elastic_exp.exp_ind is not None:
-                path = f"experiment_{elastic_exp.exp_ind}"
-            else:
-                path = f"T_{elastic_exp.T}_E_{elastic_exp.E}_nu_{elastic_exp.nu}"
-            
-            with open(Path(general.results_dir) / 'tables_dict' / f'{path}.pkl', "wb") as f:
-                pickle.dump(results, f)
-                
-            df = results_to_df(results)
-            df.to_csv(Path(general.results_dir) / 'tables_dict' / f"mean_rmse_{path}.csv", index=True)
-            save_table_rmse_with_std(df, Path(general.results_dir) / 'plots' / f"mean_rmse_{path}.png")
-                
+        for params in combos:
+            print(params)
+            if all(x is None for x in (elastic_exp.T, elastic_exp.E, elastic_exp.nu,
+                                        elastic_exp.exp_ind, elastic_exp.image_id)):
+                for exp_ind in [1]:
+                    results_exp = process_case(
+                        elastic_params=elastic_exp,
+                        results_dir=Path(general.results_dir),
+                        of_for_computation=[of_func],
+                        params_for_computation=[params],
+                        exp_ind=exp_ind,
+                        global_flow=optical_flow_list.global_flow
+                    )
+                    
+                    with open(Path(general.results_dir) / 'tables_dict' / f"results_exp_{exp_ind}_{elastic_exp.of_funcs[0]}_{params}.pkl", "wb") as f:
+                        pickle.dump(results_exp, f)
+                    df_exp = results_to_df(results_exp)
+                    df_exp.to_csv(Path(general.results_dir) / 'tables_dict' / f"mean_rmse_experiment_{exp_ind}_{elastic_exp.of_funcs[0]}_{params}.csv", index=True)
+                    save_table_rmse_with_std(df_exp, Path(general.results_dir) / 'plots' / f"mean_rmse_experiment_{exp_ind}_{elastic_exp.of_funcs[0]}_{params}.png")
+                    
 if __name__ == "__main__":
     jsonargparse.auto_cli(main, as_positional=False)

@@ -1,7 +1,7 @@
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-# Hessian Regularized Optical Flow for Mechanobiology
+# Optical Flow for Mechanobiology
 
 This repository provides a pipeline to **simulate** micropipette aspiration experiments on elastic cells and **analyze** the resulting images using multiple optical flow algorithms, estimating key mechanical quantities: displacement, strain, stress, and traction forces.
 

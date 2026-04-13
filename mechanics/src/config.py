@@ -75,6 +75,73 @@ class OpticalFlowParams:
     farneback: FarnebackParams
     tvl1: TVL1Params
     ilk: ILKParams
+    
+@dataclass
+class FistaParamsList:
+    """FISTA parameters"""
+    num_iter: List[int]
+    num_warp: List[int]
+    alpha: List[float]
+    beta: List[float]
+    eps: float
+    num_pyramid: int
+    pyramid_downscale: float
+    pyramid_min_size: int
+
+@dataclass
+class HSParamsList:
+    """Horn Schunck parameters"""
+    num_iter: List[int]
+    num_warp: List[int]
+    alpha: List[float]
+    eps: float
+    num_pyramid: int
+    pyramid_downscale: float
+    pyramid_min_size: int
+    w: float
+
+@dataclass
+class FarnebackParamsList:
+    """Farneback parameters
+    """
+    winSize: List[int]
+    pyrScale: List[float]
+    numLevels: List[int]
+    fastPyramids: bool
+    numIters: List[int]
+    polyN: List[int]
+    polySigma: List[float]
+    flags: int
+
+@dataclass
+class TVL1ParamsList:
+    """TV-L1 parameters
+    """
+    attachment: List[float]
+    tightness: List[float]
+    num_warp: List[int]
+    num_iter: List[int]
+    tol: float
+    prefilter: bool
+
+@dataclass
+class ILKParamsList:
+    """ILK parameters
+    """
+    radius: List[float]
+    num_warp: List[int]
+    gaussian: bool
+    prefilter: bool
+    
+@dataclass
+class OpticalFlowParamsList:
+    """Optical Flow parameters"""
+    global_flow: bool
+    fista_list: FistaParamsList
+    hs_list: HSParamsList
+    farneback_list: FarnebackParamsList
+    tvl1_list: TVL1ParamsList
+    ilk_list: ILKParamsList
 
 @dataclass
 class ElasticExperiment:

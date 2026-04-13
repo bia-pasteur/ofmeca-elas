@@ -5,6 +5,10 @@ python -m data_generation.examples.generate_elastic_datasets --config=data_gener
 
 python -m data_generation.examples.generate_noisy_elastic_datasets --config=data_generation/configs/noise_params.yaml
 
+# Parameter testing 
+
+python -m mechanics.examples.search_params --config=mechanics/configs/of_search_params.yaml --config=mechanics/configs/general.yaml --config=mechanics/configs/elastic_exp.yaml
+
 # Experiments
 
 # Elastic experiment
