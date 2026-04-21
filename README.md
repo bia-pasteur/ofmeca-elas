@@ -21,13 +21,7 @@ The repository is divided into two main parts:
 
 **1. Data generation** — Generates synthetic images of deformed elastic cells using FEniCSx (finite element simulation).
 
-> [!NOTE]
-> FEniCSx is computationally heavy. Pre-generated datasets are available at [link].
-
 **2. Mechanical analysis** — Runs multiple optical flow algorithms on the images, computes derived mechanical quantities, and benchmarks the results.
-
-> [!TIP]
-> You can either run the **full pipeline** (generation + analysis) or skip data generation and use **pre-generated data** directly.
 
 <p align="center">
   <img src="docs/pipeline.png" width="600" alt="Description"/>
@@ -43,7 +37,7 @@ Start by cloning the repository:
 git clone git@github.com/bia-pasteur/ofmeca.git
 ```
 
-### Option A — Full pipeline
+### Full pipeline
 
 Create a conda environment with Python 3.12 and install FEniCSx:
 
@@ -62,24 +56,9 @@ Then run the full pipeline:
 ```bash
 ./run_all.sh
 ```
-
-### Option B — Analysis only (pre-generated data)
-
-> [!TIP]
-> Download the pre-generated dataset from [link] and place it under `data/`.
-
-Install analysis requirements only:
-
-```bash
-pip install -r mechanics/requirements.txt
-```
-
 ---
 
 ## Data Generation
-
-> [!NOTE]
-> Skip this section if you are using the pre-generated datasets.
 
 Install the data generation requirements:
 
@@ -88,7 +67,7 @@ conda install -c conda-forge fenics-dolfinx
 pip install -r data_generation/requirements.txt
 ```
 
-We provide real cell images at `img_paths` and segmentation masks at `masks_paths`. These are used as an initial position of a cell that will be deformed using the Finite Elements Methods. The images currently used are from the Cell Tracking Challenge dataset `Glioblastoma-astrocytoma U373 cells on a polyacrylamide substrate` provided by Dr S. Kumar., Department of Bioengineering, University of California at Berkeley, Berkeley CA (USA).
+In `data_generation/configs/elastic_params.yaml`, we provide real cell images at `img_paths` and segmentation masks at `masks_paths`. These are used as an initial position of a cell that will be deformed using the Finite Elements Methods. The images used in our case are t000 and t066 form the folder 01 and their associated segmentation mask in the Cell Tracking Challenge dataset `Glioblastoma-astrocytoma U373 cells on a polyacrylamide substrate` provided by Dr S. Kumar., Department of Bioengineering, University of California at Berkeley, Berkeley CA (USA). 
 
 ### Elastic experiments
 
