@@ -34,7 +34,7 @@ The repository is divided into two main parts:
 Start by cloning the repository:
 
 ```bash
-git clone git@github.com/bia-pasteur/ofmeca.git
+git clone git@github.com/bia-pasteur/ofmeca-elas.git
 ```
 
 ### Full pipeline
